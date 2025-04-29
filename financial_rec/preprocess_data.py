@@ -112,14 +112,14 @@ def preprocess_and_save(input_json_path: str,
     system_prompt = _build_system_prompt()
 
     processed_splits = {}
-    for split_name, split_data in [('train', train_data), ('val', val_data), ('test', test_data)]:
+    for split_name, current_split_data in [('train', train_data), ('val', val_data), ('test', test_data)]:
         processed_records = []
-        if not split_data:
+        if not current_split_data:
             print(f"Warning: {split_name} split is empty, skipping.")
             continue
             
-        print(f"Processing {split_name} split ({len(split_data)} records)...")
-        for i, sample in enumerate(split_data):
+        print(f"Processing {split_name} split ({len(current_split_data)} records)...")
+        for i, sample in enumerate(current_split_data):
             user_query = _build_user_query(sample)
             # Combine prompts into the final format expected by Verl
             full_prompt = f"{system_prompt}\n\nUSER: {user_query}\nASSISTANT:"
@@ -127,14 +127,13 @@ def preprocess_and_save(input_json_path: str,
             record = {
                 "prompt": full_prompt,
                 "data_source": "financial_rec",
-                # Store the original sample dict directly for the RewardManager
-                "ground_truth_sample": sample 
+                "ground_truth_sample": json.dumps(sample) 
             }
             processed_records.append(record)
             
             # Optional: Print progress
             # if (i + 1) % 100 == 0:
-            #     print(f"  Processed {i+1}/{len(split_data)} records for {split_name}...")
+            #     print(f"  Processed {i+1}/{len(current_split_data)} records for {split_name}...")
 
         processed_splits[split_name] = pd.DataFrame(processed_records)
         print(f"Finished processing {split_name} split.")

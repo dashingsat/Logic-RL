@@ -20,6 +20,7 @@ import torch
 from verl.utils.reward_score import gsm8k, math, multiply, countdown, kk
 from verl.utils.reward_score import financial_rec
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+import json
 
 
 def _select_rm_score_fn(data_source):
@@ -77,21 +78,43 @@ class RewardManager():
                 
                 response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
                 
-                ground_truth_sample = data_item.non_tensor_batch.get('ground_truth_sample') 
-                if ground_truth_sample is None:
+                # --- Get Ground Truth --- 
+                # Assume ground truth sample dict (or JSON string) is stored here
+                raw_ground_truth = data_item.non_tensor_batch.get('ground_truth_sample') 
+                ground_truth_sample = None # Initialize
+                
+                if isinstance(raw_ground_truth, str):
+                    # <<< Deserialize JSON string back to dictionary >>>
+                    try:
+                        ground_truth_sample = json.loads(raw_ground_truth)
+                    except json.JSONDecodeError:
+                         print(f"Error: Failed to decode ground_truth_sample JSON for item {i}. Skipping.")
+                         continue
+                elif isinstance(raw_ground_truth, dict):
+                    # If it's already a dict (e.g., legacy format or direct object storage worked)
+                    ground_truth_sample = raw_ground_truth
+                elif raw_ground_truth is None:
+                    # Fallback or error if the expected key is missing
                     print(f"Warning: 'ground_truth_sample' not found in non_tensor_batch for item {i}. Checking legacy location.")
-                    ground_truth_sample = data_item.non_tensor_batch.get('reward_model', {}).get('ground_truth')
-                    if ground_truth_sample is None:
+                    legacy_gt = data_item.non_tensor_batch.get('reward_model', {}).get('ground_truth')
+                    if legacy_gt is None:
                          print(f"Error: Ground truth missing entirely for item {i}. Skipping reward calculation.")
                          continue # Skip this item if no ground truth
-                    elif not isinstance(ground_truth_sample, dict):
+                    elif isinstance(legacy_gt, dict):
+                         ground_truth_sample = legacy_gt # Use legacy dict if found
+                    else:
                          print(f"Error: Legacy ground truth is not a dict for item {i}. Skipping reward calculation.")
-                         continue # Skip if legacy GT is not the expected dict
+                         continue
+                else:
+                     print(f"Error: 'ground_truth_sample' is not a string or dict for item {i}. Type: {type(raw_ground_truth)}. Skipping.")
+                     continue # Skip if GT is not a string or dict
 
-                if not isinstance(ground_truth_sample, dict):
-                     print(f"Error: 'ground_truth_sample' is not a dictionary for item {i}. Skipping reward calculation.")
-                     continue # Skip if GT is not a dict
+                # Ensure we have a valid dictionary now
+                if ground_truth_sample is None:
+                     print(f"Error: Could not obtain valid ground_truth_sample dictionary for item {i}. Skipping.")
+                     continue 
 
+                # --- Select and Compute Score --- 
                 data_source = data_item.non_tensor_batch['data_source']
                 compute_score_fn = _select_rm_score_fn(data_source)
                 
