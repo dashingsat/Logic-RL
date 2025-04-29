@@ -18,6 +18,7 @@ Note that we don't combine the main with ray_trainer as ray_trainer is used by o
 from verl import DataProto
 import torch
 from verl.utils.reward_score import gsm8k, math, multiply, countdown, kk
+from verl.utils.reward_score import financial_rec
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 
 
@@ -32,62 +33,100 @@ def _select_rm_score_fn(data_source):
         return countdown.compute_score
     elif "kk" in data_source:
         return kk.compute_score
+    elif data_source == 'financial_rec':
+        return financial_rec.compute_score
     else:
-        raise NotImplementedError
+        raise NotImplementedError(f"No reward score function implemented for data_source: {data_source}")
 
 
 class RewardManager():
     """The reward manager.
     """
 
-    def __init__(self, tokenizer, num_examine) -> None:
+    def __init__(self, tokenizer, num_examine, config=None) -> None:
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
+        self.config = config
+        self.aggregation_mode = self.config.get('custom_env', {}).get('aggregation_mode', 'partial') if self.config else 'partial'
+        print(f"[RewardManager] Initialized with aggregation_mode: {self.aggregation_mode}")
 
     def __call__(self, data: DataProto):
         """We will expand this function gradually based on the available datasets"""
 
-        # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
         if 'rm_scores' in data.batch.keys():
-            return data.batch['rm_scores']
+            print("Warning: Pre-computed 'rm_scores' found in batch, but RewardManager will recompute based on data_source.")
+            # return data.batch['rm_scores'] # Commenting out to ensure our logic runs
 
         reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
-
         already_print_data_sources = {}
 
         for i in range(len(data)):
             data_item = data[i]  # DataProtoItem
+            score = 0.0 # Default score
 
-            prompt_ids = data_item.batch['prompts']
+            try:
+                prompt_ids = data_item.batch['prompts']
+                response_ids = data_item.batch['responses']
+                attention_mask = data_item.batch['attention_mask']
+                prompt_length = prompt_ids.shape[-1]
+                
+                total_valid_length = attention_mask.sum()
+                valid_response_length = max(0, total_valid_length - prompt_length)
+                
+                valid_response_ids = response_ids[:valid_response_length]
+                
+                response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
+                
+                ground_truth_sample = data_item.non_tensor_batch.get('ground_truth_sample') 
+                if ground_truth_sample is None:
+                    print(f"Warning: 'ground_truth_sample' not found in non_tensor_batch for item {i}. Checking legacy location.")
+                    ground_truth_sample = data_item.non_tensor_batch.get('reward_model', {}).get('ground_truth')
+                    if ground_truth_sample is None:
+                         print(f"Error: Ground truth missing entirely for item {i}. Skipping reward calculation.")
+                         continue # Skip this item if no ground truth
+                    elif not isinstance(ground_truth_sample, dict):
+                         print(f"Error: Legacy ground truth is not a dict for item {i}. Skipping reward calculation.")
+                         continue # Skip if legacy GT is not the expected dict
 
-            prompt_length = prompt_ids.shape[-1]
+                if not isinstance(ground_truth_sample, dict):
+                     print(f"Error: 'ground_truth_sample' is not a dictionary for item {i}. Skipping reward calculation.")
+                     continue # Skip if GT is not a dict
 
-            valid_prompt_length = data_item.batch['attention_mask'][:prompt_length].sum()
-            valid_prompt_ids = prompt_ids[-valid_prompt_length:]
+                data_source = data_item.non_tensor_batch['data_source']
+                compute_score_fn = _select_rm_score_fn(data_source)
+                
+                kwargs = {
+                    'aggregation_mode': self.aggregation_mode
+                }
 
-            response_ids = data_item.batch['responses']
-            valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
-            valid_response_ids = response_ids[:valid_response_length]
+                score = compute_score_fn(
+                    llm_output_str=response_str, 
+                    ground_truth_sample=ground_truth_sample, 
+                    **kwargs
+                )
+                
+                if valid_response_length > 0:
+                    reward_tensor[i, valid_response_length - 1] = score
+                else:
+                     print(f"Warning: Zero length response detected for item {i}. Assigning score 0.")
 
-            # decode
-            sequences = torch.cat((valid_prompt_ids, valid_response_ids))
-            sequences_str = self.tokenizer.decode(sequences)
+                if data_source not in already_print_data_sources:
+                    already_print_data_sources[data_source] = 0
 
-            ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
-
-            # select rm_score
-            data_source = data_item.non_tensor_batch['data_source']
-            compute_score_fn = _select_rm_score_fn(data_source)
-
-            score = compute_score_fn(solution_str=sequences_str, ground_truth=ground_truth)
-            reward_tensor[i, valid_response_length - 1] = score
-
-            if data_source not in already_print_data_sources:
-                already_print_data_sources[data_source] = 0
-
-            if already_print_data_sources[data_source] < self.num_examine:
-                already_print_data_sources[data_source] += 1
-                print(sequences_str)
+                if already_print_data_sources[data_source] < self.num_examine:
+                    already_print_data_sources[data_source] += 1
+                    prompt_str = self.tokenizer.decode(prompt_ids, skip_special_tokens=True)
+                    print(f"--- Debug Item {i} (DataSource: {data_source}) ---")
+                    print(f"Prompt: ...{prompt_str[-200:]}")
+                    print(f"Response: {response_str}")
+                    print(f"Ground Truth Label: {ground_truth_sample.get('label', 'N/A')}")
+                    print(f"Computed Score: {score}")
+                    print(f"-------------------------------------------------")
+            
+            except Exception as e:
+                print(f"Error processing reward for item {i}: {e}")
+                import traceback
+                traceback.print_exc()
 
         return reward_tensor
 
@@ -157,12 +196,6 @@ def main_task(config):
         Role.RefPolicy: global_pool_id,
     }
 
-    # we should adopt a multi-source reward function here
-    # - for rule-based rm, we directly call a reward score
-    # - for model-based rm, we call a model
-    # - for code related prompt, we send to a sandbox if there are test cases
-    # - finally, we combine all the rewards together
-    # - The reward type depends on the tag of the data
     if config.reward_model.enable:
         if config.reward_model.strategy == 'fsdp':
             from verl.workers.fsdp_workers import RewardModelWorker
@@ -173,10 +206,8 @@ def main_task(config):
         role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
         mapping[Role.RewardModel] = global_pool_id
 
-    reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0)
-
-    # Note that we always use function-based RM for validation
-    val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1)
+    reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0, config=config)
+    val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1, config=config)
 
     resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 
