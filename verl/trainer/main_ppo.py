@@ -131,7 +131,12 @@ class RewardManager():
                 if valid_response_length > 0:
                     reward_tensor[i, valid_response_length - 1] = score
                 else:
-                     print(f"Warning: Zero length response detected for item {i}. Assigning score 0.")
+                    # <<< Log the raw beginning of the response when valid_response_length is zero >>>
+                    raw_response_start_ids = response_ids[:10] # Look at first 10 tokens
+                    raw_response_start_str = self.tokenizer.decode(raw_response_start_ids, skip_special_tokens=False) # Decode without skipping special tokens
+                    print(f"Warning: Zero length response detected for item {i}. Assigning score 0.")
+                    print(f"         Raw response start tokens: {raw_response_start_ids.tolist()}")
+                    print(f"         Decoded raw response start: {repr(raw_response_start_str)}")
 
                 # --- Debug Printing --- (Controlled by num_examine)
                 if data_source not in already_print_data_sources:
