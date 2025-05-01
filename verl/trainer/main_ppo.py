@@ -133,18 +133,23 @@ class RewardManager():
                 else:
                      print(f"Warning: Zero length response detected for item {i}. Assigning score 0.")
 
+                # --- Debug Printing --- (Controlled by num_examine)
                 if data_source not in already_print_data_sources:
                     already_print_data_sources[data_source] = 0
 
                 if already_print_data_sources[data_source] < self.num_examine:
                     already_print_data_sources[data_source] += 1
+                    # Decode full prompt for clarity
                     prompt_str = self.tokenizer.decode(prompt_ids, skip_special_tokens=True)
-                    print(f"--- Debug Item {i} (DataSource: {data_source}) ---")
-                    print(f"Prompt: ...{prompt_str[-200:]}")
-                    print(f"Response: {response_str}")
-                    print(f"Ground Truth Label: {ground_truth_sample.get('label', 'N/A')}")
-                    print(f"Computed Score: {score}")
-                    print(f"-------------------------------------------------")
+                    print(f"\n===== [TRAINING STEP SAMPLE {i}] (DataSource: {data_source}) =====")
+                    print(f"[PROMPT]:\n{prompt_str}")
+                    print("-"*40) # Separator
+                    print(f"[RESPONSE]:\n{response_str}")
+                    print("-"*40) # Separator
+                    print(f"[GROUND TRUTH SAMPLE]:\n{json.dumps(ground_truth_sample, indent=2)}") # Print GT dict nicely
+                    print("-"*40) # Separator
+                    print(f"[COMPUTED SCORE]: {score}")
+                    print(f"======================================================\n")
             
             except Exception as e:
                 print(f"Error processing reward for item {i}: {e}")
@@ -229,7 +234,7 @@ def main_task(config):
         role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
         mapping[Role.RewardModel] = global_pool_id
 
-    reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0, config=config)
+    reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1, config=config)
     val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1, config=config)
 
     resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
