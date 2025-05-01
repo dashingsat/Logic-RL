@@ -1,5 +1,5 @@
 set -x
-MODEL_PATH="Qwen/Qwen2.5-7B-Instruct-1M"
+MODEL_PATH="Qwen/Qwen2.5-0.5B-Instruct"
 export VLLM_ATTENTION_BACKEND=XFORMERS
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -9,7 +9,7 @@ python3 -m verl.trainer.main_ppo \
     data.val_batch_size=32 \
     data.max_prompt_length=1024 \
     data.max_response_length=512 \
-    custom_env.aggregation_mode=partial \
+    +custom_env.aggregation_mode=partial \
     actor_rollout_ref.model.path=$MODEL_PATH\
     actor_rollout_ref.actor.optim.lr=3e-7 \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -33,11 +33,11 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger=['wandb'] \
     trainer.project_name='GRPO_FinancialRec' \
-    trainer.experiment_name='Qwen2-7B-Instruct-2GPU' \
+    trainer.experiment_name='Qwen2.5-0.5B-Instruct-2GPU' \
     trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
-    trainer.default_local_dir=checkpoints/GRPO_FinancialRec/Qwen2-7B-Instruct-2GPU \
+    trainer.default_local_dir=checkpoints/GRPO_FinancialRec/Qwen2.5-0.5B-Instruct-2GPU \
     trainer.default_hdfs_dir=null \
     trainer.save_freq=10 \
     trainer.test_freq=10 \
-    trainer.total_epochs=5 $@ 2>&1 | tee financial_rec_grpo_2gpu.log
+    trainer.total_epochs=5 $@ 2>&1 | tee financial_rec_grpo_0.5B_2gpu.log
