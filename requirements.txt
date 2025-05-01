@@ -1,8 +1,10 @@
+torch
+wheel
 accelerate
 codetiming
 datasets
 dill
-flash-attn
+# flash-attn
 hydra-core
 numpy
 pandas
@@ -14,3 +16,4 @@ pyarrow
 scikit-learn
 vllm==0.6.3
 wandb
+python-dotenv

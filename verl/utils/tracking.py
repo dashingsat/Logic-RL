@@ -39,6 +39,9 @@ class Tracking(object):
         if 'tracking' in default_backend or 'wandb' in default_backend:
             import wandb
             import os
+            from dotenv import load_dotenv
+            load_dotenv()
+
             WANDB_API_KEY = os.environ.get("WANDB_API_KEY", None)
             if WANDB_API_KEY:
                 wandb.login(key=WANDB_API_KEY)
